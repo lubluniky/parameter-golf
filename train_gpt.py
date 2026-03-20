@@ -39,6 +39,8 @@ class Hyperparameters:
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
     eval_seq_len = int(os.environ.get("EVAL_SEQ_LEN", 1024))
     eval_stride = int(os.environ.get("EVAL_STRIDE", 64))
+    dev_val_tokens = int(os.environ.get("DEV_VAL_TOKENS", 0))
+    skip_final_eval = bool(int(os.environ.get("SKIP_FINAL_EVAL", "0")))
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
@@ -75,6 +77,7 @@ class Hyperparameters:
     ttt_lr = float(os.environ.get("TTT_LR", 0.01))
     ttt_chunk_size = int(os.environ.get("TTT_CHUNK_SIZE", 256))
     ttt_batch_size = int(os.environ.get("TTT_BATCH_SIZE", 64))
+    ttt_doc_limit = int(os.environ.get("TTT_DOC_LIMIT", 0))
     ttt_hi = float(os.environ.get("TTT_HI", 1.35))
     ttt_lo = float(os.environ.get("TTT_LO", 0.65))
 def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -> Tensor:
@@ -171,6 +174,13 @@ def load_validation_tokens(pattern: str, seq_len: int) -> Tensor:
     if usable <= 0:
         raise ValueError(f"Validation split is too short for TRAIN_SEQ_LEN={seq_len}")
     return tokens[: usable + 1]
+def maybe_trim_validation_tokens(tokens: Tensor, seq_len: int, token_limit: int) -> Tensor:
+    if token_limit <= 0:
+        return tokens
+    usable = min(((token_limit) // seq_len) * seq_len, tokens.numel() - 1)
+    if usable <= 0:
+        return tokens
+    return tokens[: usable + 1].contiguous()
 def eval_val(
     args: Hyperparameters,
     model: nn.Module,
@@ -884,6 +894,8 @@ def eval_val_ttt(
 ) -> tuple[float, float]:
     all_tokens = torch.cat([load_data_shard(Path(f)) for f in sorted(glob.glob(args.val_files))])
     docs = _find_docs(all_tokens)
+    if args.ttt_doc_limit > 0:
+        docs = docs[: args.ttt_doc_limit]
     rank_docs = docs[(len(docs) * rank) // world_size : (len(docs) * (rank + 1)) // world_size]
     rank_docs.sort(key=lambda d: d[1])
     base_model.eval()
@@ -1073,6 +1085,7 @@ def main() -> None:
     dataset_dir = Path(args.data_path).resolve()
     actual_train_files = len(list(dataset_dir.glob("fineweb_train_*.bin")))
     val_tokens = load_validation_tokens(args.val_files, args.train_seq_len)
+    val_tokens = maybe_trim_validation_tokens(val_tokens, args.train_seq_len, args.dev_val_tokens)
     base_bytes_lut, has_leading_space_lut, is_boundary_token_lut = build_sentencepiece_luts(
         sp, args.vocab_size, device
     )
@@ -1323,6 +1336,11 @@ def main() -> None:
         quant_blob_disk = f.read()
     quant_state = torch.load(io.BytesIO(zlib.decompress(quant_blob_disk)), map_location="cpu")
     base_model.load_state_dict(dequantize_state_dict_lowbit(quant_state, device=device), strict=True)
+    if args.skip_final_eval:
+        log0("skip_final_eval:1")
+        if distributed:
+            dist.destroy_process_group()
+        return
     eval_sl = args.eval_seq_len if args.eval_seq_len > 0 else args.train_seq_len
     eval_stride = args.eval_stride
     if eval_sl != args.train_seq_len:
