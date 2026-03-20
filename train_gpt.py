@@ -73,8 +73,8 @@ class Hyperparameters:
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
     muon_weight_decay = float(os.environ.get("MUON_WEIGHT_DECAY", 0.02))
-    quant_main_bits = int(os.environ.get("QUANT_MAIN_BITS", 6))
-    quant_proj_bits = int(os.environ.get("QUANT_PROJ_BITS", 4))
+    quant_main_bits = int(os.environ.get("QUANT_MAIN_BITS", 8))
+    quant_proj_bits = int(os.environ.get("QUANT_PROJ_BITS", 8))
     quant_align_bytes = int(os.environ.get("QUANT_ALIGN_BYTES", 128))
     quant_jit = bool(int(os.environ.get("QUANT_JIT", "1")))
     ttt_enable = bool(int(os.environ.get("TTT_ENABLE", "0")))
@@ -322,7 +322,8 @@ def maybe_build_golf_cuda_extension():
       const dim3 grid((logical_cols + block.x - 1) / block.x, rows);
       auto stream = at::cuda::getDefaultCUDAStream();
       if (bits == 4) dequant_kernel<4><<<grid, block, 0, stream>>>(packed.data_ptr<uint8_t>(), reinterpret_cast<half*>(scales.data_ptr<at::Half>()), reinterpret_cast<half*>(out.data_ptr<at::Half>()), static_cast<int>(logical_cols), static_cast<int>(row_stride_bytes));
-      else dequant_kernel<6><<<grid, block, 0, stream>>>(packed.data_ptr<uint8_t>(), reinterpret_cast<half*>(scales.data_ptr<at::Half>()), reinterpret_cast<half*>(out.data_ptr<at::Half>()), static_cast<int>(logical_cols), static_cast<int>(row_stride_bytes));
+      else if (bits == 6) dequant_kernel<6><<<grid, block, 0, stream>>>(packed.data_ptr<uint8_t>(), reinterpret_cast<half*>(scales.data_ptr<at::Half>()), reinterpret_cast<half*>(out.data_ptr<at::Half>()), static_cast<int>(logical_cols), static_cast<int>(row_stride_bytes));
+      else dequant_kernel<8><<<grid, block, 0, stream>>>(packed.data_ptr<uint8_t>(), reinterpret_cast<half*>(scales.data_ptr<at::Half>()), reinterpret_cast<half*>(out.data_ptr<at::Half>()), static_cast<int>(logical_cols), static_cast<int>(row_stride_bytes));
       return out;
     }
     """
@@ -451,7 +452,7 @@ def quantize_state_dict_lowbit(state_dict: dict[str, Tensor], args: Hyperparamet
         }
         stats["quant_payload_bytes"] += tensor_nbytes(packed) + tensor_nbytes(s)
     obj: dict[str, object] = {
-        "__quant_format__": "packed_mixed_4_6_v1",
+        "__quant_format__": "packed_rowwise_mixedbits_v2",
         "quantized": quantized,
         "scales": scales,
         "dtypes": dtypes,
