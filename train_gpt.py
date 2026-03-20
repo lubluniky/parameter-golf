@@ -72,7 +72,7 @@ class Hyperparameters:
     quant_proj_bits = int(os.environ.get("QUANT_PROJ_BITS", 4))
     quant_align_bytes = int(os.environ.get("QUANT_ALIGN_BYTES", 128))
     quant_jit = bool(int(os.environ.get("QUANT_JIT", "1")))
-    ttt_enable = bool(int(os.environ.get("TTT_ENABLE", "1")))
+    ttt_enable = bool(int(os.environ.get("TTT_ENABLE", "0")))
     ttt_rank = int(os.environ.get("TTT_RANK", 8))
     ttt_lr = float(os.environ.get("TTT_LR", 0.01))
     ttt_chunk_size = int(os.environ.get("TTT_CHUNK_SIZE", 256))
